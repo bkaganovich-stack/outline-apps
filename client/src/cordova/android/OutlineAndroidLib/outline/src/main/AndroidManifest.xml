@@ -18,6 +18,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Required for split tunneling: enumerate all installed packages on Android 11+ -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <application>
         <!-- This is needed for the instrumentation tests to run. -->
         <meta-data android:name="io.sentry.auto-init" android:value="false" />

@@ -40,6 +40,8 @@ import org.json.JSONObject;
 import org.outline.log.OutlineLogger;
 import org.outline.log.SentryErrorReporter;
 import org.outline.vpn.Errors;
+import org.outline.vpn.RoutingActivity;
+import org.outline.vpn.SplitTunnelActivity;
 import org.outline.vpn.VpnServiceStarter;
 import org.outline.vpn.VpnTunnelService;
 
@@ -64,6 +66,8 @@ public class OutlinePlugin extends CordovaPlugin {
     IS_RUNNING("isRunning"),
     INIT_ERROR_REPORTING("initializeErrorReporting"),
     REPORT_EVENTS("reportEvents"),
+    SPLIT_TUNNEL("splitTunnel"),
+    ROUTING("routing"),
     QUIT("quitApplication");
 
     private final static Map<String, Action> actions = new HashMap<>();
@@ -172,6 +176,20 @@ public class OutlinePlugin extends CordovaPlugin {
     if (Action.ON_STATUS_CHANGE.is(action)) {
       this.statusCallback = callbackContext;
       // TODO(fortuna): unregister original with Cordova.
+      return true;
+    }
+
+    if (Action.SPLIT_TUNNEL.is(action)) {
+      Intent splitTunnelIntent = new Intent(getBaseContext(), SplitTunnelActivity.class);
+      this.cordova.getActivity().startActivity(splitTunnelIntent);
+      callbackContext.success();
+      return true;
+    }
+
+    if (Action.ROUTING.is(action)) {
+      Intent routingIntent = new Intent(getBaseContext(), RoutingActivity.class);
+      this.cordova.getActivity().startActivity(routingIntent);
+      callbackContext.success();
       return true;
     }
 

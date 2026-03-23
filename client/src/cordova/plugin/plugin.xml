@@ -64,6 +64,12 @@
           </intent-filter>
       </receiver>
 
+      <activity
+        android:name="org.outline.vpn.SplitTunnelActivity"
+        android:exported="false"
+        android:label="Split Tunneling"
+        android:theme="@android:style/Theme.NoTitleBar" />
+
       <meta-data android:name="io.sentry.auto-init" android:value="false" />
     </config-file>
 

@@ -178,6 +178,14 @@ export class App {
       this.quitApplication.bind(this)
     );
     this.rootEl.addEventListener(
+      'SplitTunnelPressed',
+      this.openSplitTunnel.bind(this)
+    );
+    this.rootEl.addEventListener(
+      'RoutingPressed',
+      this.openRouting.bind(this)
+    );
+    this.rootEl.addEventListener(
       'AutoConnectDialogDismissed',
       this.autoConnectDialogDismissed.bind(this)
     );
@@ -420,6 +428,37 @@ export class App {
 
   private hideNavigation() {
     this.rootEl.$.drawer.open = false;
+  }
+
+  private openSplitTunnel() {
+    this.hideNavigation();
+    try {
+      // Call the Cordova plugin directly to launch the native split tunnel activity
+      (window as any).cordova?.exec(
+        () => {},
+        (e: any) => console.error('Failed to open split tunnel settings', e),
+        'OutlinePlugin',
+        'splitTunnel',
+        []
+      );
+    } catch (e) {
+      console.error('Split tunneling is not available on this platform', e);
+    }
+  }
+
+  private openRouting() {
+    this.hideNavigation();
+    try {
+      (window as any).cordova?.exec(
+        () => {},
+        (e: any) => console.error('Failed to open routing settings', e),
+        'OutlinePlugin',
+        'routing',
+        []
+      );
+    } catch (e) {
+      console.error('Routing is not available on this platform', e);
+    }
   }
 
   private changePage(event: CustomEvent) {

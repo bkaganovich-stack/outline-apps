@@ -240,6 +240,16 @@ export class RootNavigation extends LitElement {
             <md-icon slot="start">language</md-icon>
             ${this.localize('change-language-page-title')}
           </md-list-item>
+          <md-list-item @click=${this.openSplitTunnel}>
+            <md-ripple></md-ripple>
+            <md-icon slot="start">apps</md-icon>
+            Split Tunneling
+          </md-list-item>
+          <md-list-item @click=${this.openRouting}>
+            <md-ripple></md-ripple>
+            <md-icon slot="start">route</md-icon>
+            Routing Rules
+          </md-list-item>
           ${this.showAppearanceView
             ? html`
                 <md-list-item @click=${() => this.changePage('appearance')}>
@@ -301,6 +311,24 @@ export class RootNavigation extends LitElement {
     this.dispatchEvent(
       new CustomEvent('ChangePage', {
         detail: {page},
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private openSplitTunnel() {
+    this.dispatchEvent(
+      new CustomEvent('SplitTunnelPressed', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private openRouting() {
+    this.dispatchEvent(
+      new CustomEvent('RoutingPressed', {
         bubbles: true,
         composed: true,
       })

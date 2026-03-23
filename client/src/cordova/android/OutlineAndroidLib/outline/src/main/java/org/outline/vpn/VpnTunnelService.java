@@ -39,6 +39,7 @@ import androidx.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -143,7 +144,8 @@ public class VpnTunnelService extends VpnService {
       return super.onBind(intent);
     }
     if (intent.getBooleanExtra(VpnServiceStarter.AUTOSTART_EXTRA, false)) {
-      startLastSuccessfulTunnel();
+      // Run on background thread to avoid Service ANR (tunnel setup can take 20+ seconds)
+      new Thread(() -> startLastSuccessfulTunnel(), "vpn-autostart-bind").start();
     }
     String errorReportingApiKey =
         intent.getStringExtra(MessageData.ERROR_REPORTING_API_KEY.value);
@@ -164,7 +166,11 @@ public class VpnTunnelService extends VpnService {
           intent.getBooleanExtra(VpnServiceStarter.AUTOSTART_EXTRA, false);
       boolean startedByAlwaysOn = VpnService.SERVICE_INTERFACE.equals(intent.getAction());
       if (startedByVpnStarter || startedByAlwaysOn) {
-        startLastSuccessfulTunnel();
+        // Run on background thread to avoid Service ANR.
+        // startLastSuccessfulTunnel() calls startTunnel() which creates Go client,
+        // establishes TUN interface, connects to remote, and starts traffic relay —
+        // this can easily take 20+ seconds and trigger ANR if done on main thread.
+        new Thread(() -> startLastSuccessfulTunnel(), "vpn-autostart").start();
       }
     }
     return superOnStartReturnValue;
@@ -250,6 +256,19 @@ public class VpnTunnelService extends VpnService {
                         .addDnsServer(dnsResolver)
                         .setBlocking(true)
                         .addDisallowedApplication(this.getPackageName());
+
+        // Apply split tunneling: exclude user-selected apps from the VPN.
+        SplitTunnelManager splitTunnelManager = new SplitTunnelManager(this);
+        Set<String> disallowedApps = splitTunnelManager.getDisallowedApps();
+        for (String packageName : disallowedApps) {
+          try {
+            builder.addDisallowedApplication(packageName);
+            LOG.info(String.format(Locale.ROOT, "Split tunnel: bypassing %s", packageName));
+          } catch (PackageManager.NameNotFoundException e) {
+            LOG.warning(String.format(Locale.ROOT,
+                "Split tunnel: package not found %s", packageName));
+          }
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
           builder.setMetered(false);
