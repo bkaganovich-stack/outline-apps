@@ -1,0 +1,140 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # Check for upstream updates every 12 hours
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+    # Allow manual trigger from Actions tab
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: split-tunneling
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/Jigsaw-Code/outline-apps.git
+
+      - name: Fetch upstream
+        run: git fetch upstream master
+
+      - name: Check for new commits
+        id: check
+        run: |
+          # Find the merge base between our branch and upstream
+          MERGE_BASE=$(git merge-base HEAD upstream/master)
+          UPSTREAM_HEAD=$(git rev-parse upstream/master)
+
+          if [ "$MERGE_BASE" = "$UPSTREAM_HEAD" ]; then
+            echo "No new upstream commits."
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+          else
+            NEW_COMMITS=$(git rev-list --count "$MERGE_BASE..upstream/master")
+            echo "Found $NEW_COMMITS new upstream commit(s)."
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+
+            # Get upstream version info for issue/commit messages
+            UPSTREAM_SHORT=$(git rev-parse --short upstream/master)
+            echo "upstream_sha=$UPSTREAM_SHORT" >> "$GITHUB_OUTPUT"
+
+            # Try to get latest tag from upstream
+            UPSTREAM_TAG=$(git describe --tags --abbrev=0 upstream/master 2>/dev/null || echo "no-tag")
+            echo "upstream_tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attempt merge
+        id: merge
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          if git merge upstream/master --no-edit; then
+            echo "merge_ok=true" >> "$GITHUB_OUTPUT"
+            echo "Merge successful."
+          else
+            echo "merge_ok=false" >> "$GITHUB_OUTPUT"
+            echo "Merge failed — conflicts detected."
+            git merge --abort
+          fi
+
+      - name: Push merged changes
+        if: steps.check.outputs.has_updates == 'true' && steps.merge.outputs.merge_ok == 'true'
+        run: git push origin split-tunneling
+
+      - name: Create issue on successful merge
+        if: steps.check.outputs.has_updates == 'true' && steps.merge.outputs.merge_ok == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const upstreamSha = '${{ steps.check.outputs.upstream_sha }}';
+            const upstreamTag = '${{ steps.check.outputs.upstream_tag }}';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Upstream merged: ${upstreamTag !== 'no-tag' ? upstreamTag : upstreamSha}`,
+              body: [
+                '## Upstream changes merged successfully',
+                '',
+                `**Upstream commit:** \`${upstreamSha}\``,
+                `**Upstream tag:** ${upstreamTag !== 'no-tag' ? upstreamTag : 'none'}`,
+                '',
+                '### Next steps',
+                '1. Pull the latest `split-tunneling` branch',
+                '2. Build the APK locally',
+                '3. Test that split tunneling still works',
+                '4. Create a new release with the updated APK',
+                '',
+                `[View upstream changes](https://github.com/Jigsaw-Code/outline-apps/commits/master)`,
+              ].join('\n'),
+              labels: ['upstream-sync'],
+            });
+
+      - name: Create issue on merge conflict
+        if: steps.check.outputs.has_updates == 'true' && steps.merge.outputs.merge_ok == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const upstreamSha = '${{ steps.check.outputs.upstream_sha }}';
+            const upstreamTag = '${{ steps.check.outputs.upstream_tag }}';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Upstream merge conflict: ${upstreamTag !== 'no-tag' ? upstreamTag : upstreamSha}`,
+              body: [
+                '## Merge conflict with upstream',
+                '',
+                `**Upstream commit:** \`${upstreamSha}\``,
+                `**Upstream tag:** ${upstreamTag !== 'no-tag' ? upstreamTag : 'none'}`,
+                '',
+                '### Manual resolution required',
+                '```bash',
+                'git fetch origin split-tunneling',
+                'git checkout split-tunneling',
+                'git remote add upstream https://github.com/Jigsaw-Code/outline-apps.git',
+                'git fetch upstream master',
+                'git merge upstream/master',
+                '# Resolve conflicts, then:',
+                'git add -A && git commit',
+                'git push origin split-tunneling',
+                '```',
+                '',
+                `[View upstream changes](https://github.com/Jigsaw-Code/outline-apps/commits/master)`,
+              ].join('\n'),
+              labels: ['upstream-sync', 'conflict'],
+            });

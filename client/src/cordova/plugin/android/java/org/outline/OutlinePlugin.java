@@ -22,13 +22,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.net.VpnService;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.RemoteException;
 import androidx.annotation.Nullable;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.apache.cordova.CallbackContext;
@@ -40,7 +44,8 @@ import org.json.JSONObject;
 import org.outline.log.OutlineLogger;
 import org.outline.log.SentryErrorReporter;
 import org.outline.vpn.Errors;
-import org.outline.vpn.RoutingActivity;
+import org.outline.vpn.LogViewerActivity;
+import org.outline.vpn.MainThreadWatchdog;
 import org.outline.vpn.SplitTunnelActivity;
 import org.outline.vpn.VpnServiceStarter;
 import org.outline.vpn.VpnTunnelService;
@@ -67,7 +72,7 @@ public class OutlinePlugin extends CordovaPlugin {
     INIT_ERROR_REPORTING("initializeErrorReporting"),
     REPORT_EVENTS("reportEvents"),
     SPLIT_TUNNEL("splitTunnel"),
-    ROUTING("routing"),
+    VIEW_LOGS("viewLogs"),
     QUIT("quitApplication");
 
     private final static Map<String, Action> actions = new HashMap<>();
@@ -104,58 +109,99 @@ public class OutlinePlugin extends CordovaPlugin {
   }
 
   private static final int REQUEST_CODE_PREPARE_VPN = 100;
+  private static final int REQUEST_CODE_NOTIFICATIONS = 101;
 
   // AIDL interface for VpnTunnelService, which is bound for the lifetime of this class.
-  // The VpnTunnelService runs in a sub process and is thread-safe.
-  // A race condition may occur when calling methods on this instance if the service unbinds.
-  // We catch any exceptions, which should generally be transient and recoverable, and report them
-  // to the WebView.
   private IVpnTunnelService vpnTunnelService;
   private String errorReportingApiKey;
   private StartVpnRequest startVpnRequest;
-  // Tunnel status change callback.
   private CallbackContext statusCallback;
+
+  // Latch that signals when the Go backend has finished initializing off the main thread.
+  private final CountDownLatch goBackendReady = new CountDownLatch(1);
+  private MainThreadWatchdog watchdog;
 
   // Connection to the VPN service.
   private final ServiceConnection vpnServiceConnection = new ServiceConnection() {
     @Override
     public void onServiceConnected(ComponentName className, IBinder binder) {
+      android.util.Log.e("OutlineInit", "onServiceConnected START on thread=" + Thread.currentThread().getName());
       vpnTunnelService = IVpnTunnelService.Stub.asInterface(binder);
-      LOG.info("VPN service connected");
+      android.util.Log.e("OutlineInit", "onServiceConnected END — VPN service bound");
     }
 
     @Override
     public void onServiceDisconnected(ComponentName className) {
       LOG.warning("VPN service disconnected");
-      // Rebind the service so the VPN automatically reconnects if the service process crashed.
-      Context context = getBaseContext();
-      Intent rebind = new Intent(context, VpnTunnelService.class);
-      rebind.putExtra(VpnServiceStarter.AUTOSTART_EXTRA, true);
-      // Send the error reporting API key so the potential crash is reported.
-      rebind.putExtra(MessageData.ERROR_REPORTING_API_KEY.value, errorReportingApiKey);
-      context.bindService(rebind, vpnServiceConnection, Context.BIND_AUTO_CREATE);
+      vpnTunnelService = null;
+      // Rebind the service after a short delay to give the :vpn process time to restart.
+      // This prevents blocking the main thread if the service is in a transitional state
+      // (e.g., after app update with active VPN connection).
+      new Thread(() -> {
+        try {
+          Thread.sleep(1000); // Wait 1 second before rebinding
+        } catch (InterruptedException ignored) {}
+        try {
+          Context context = getBaseContext();
+          Intent rebind = new Intent(context, VpnTunnelService.class);
+          rebind.putExtra(VpnServiceStarter.AUTOSTART_EXTRA, true);
+          rebind.putExtra(MessageData.ERROR_REPORTING_API_KEY.value, errorReportingApiKey);
+          context.bindService(rebind, vpnServiceConnection, Context.BIND_AUTO_CREATE);
+          LOG.info("VPN service rebind requested");
+        } catch (Exception e) {
+          LOG.log(Level.WARNING, "Failed to rebind VPN service", e);
+        }
+      }, "vpn-rebind").start();
     }
   };
 
   @Override
   protected void pluginInitialize() {
+    long t0 = System.currentTimeMillis();
+    android.util.Log.e("OutlineInit", "pluginInitialize START");
+
     OutlineLogger.registerLogHandler(SentryErrorReporter.BREADCRUMB_LOG_HANDLER);
-    Context context = getBaseContext();
+    final Context context = getBaseContext();
+    android.util.Log.e("OutlineInit", "registerLogHandler done +" + (System.currentTimeMillis()-t0) + "ms");
 
-    final GoBackendConfig goConfig = Outline.getBackendConfig();
-    goConfig.setDataDir(context.getFilesDir().getAbsolutePath());
-
+    // Register broadcast receiver (lightweight, safe on main thread).
     IntentFilter broadcastFilter = new IntentFilter();
     broadcastFilter.addAction(VpnTunnelService.STATUS_BROADCAST_KEY);
     broadcastFilter.addCategory(context.getPackageName());
     context.registerReceiver(vpnTunnelBroadcastReceiver, broadcastFilter, context.RECEIVER_NOT_EXPORTED);
+    android.util.Log.e("OutlineInit", "registerReceiver done +" + (System.currentTimeMillis()-t0) + "ms");
 
+    // Bind VPN service (async, doesn't block)
     context.bindService(new Intent(context, VpnTunnelService.class), vpnServiceConnection,
         Context.BIND_AUTO_CREATE);
+    android.util.Log.e("OutlineInit", "bindService done +" + (System.currentTimeMillis()-t0) + "ms");
+
+    // Start ANR watchdog — detects main-thread blocks, writes stack trace to file,
+    // and shows a notification so the user can view logs even when UI is frozen.
+    watchdog = new MainThreadWatchdog(context);
+    watchdog.start();
+    android.util.Log.e("OutlineInit", "watchdog started +" + (System.currentTimeMillis()-t0) + "ms");
+
+    // Initialize the Go backend OFF the main thread to prevent ANR.
+    new Thread(() -> {
+      long gt0 = System.currentTimeMillis();
+      try {
+        final GoBackendConfig goConfig = Outline.getBackendConfig();
+        goConfig.setDataDir(context.getFilesDir().getAbsolutePath());
+        android.util.Log.e("OutlineInit", "Go backend init OK in " + (System.currentTimeMillis()-gt0) + "ms");
+      } catch (Exception e) {
+        LOG.log(Level.SEVERE, "Failed to initialize Go backend", e);
+      } finally {
+        goBackendReady.countDown();
+      }
+    }, "go-backend-init").start();
+
+    android.util.Log.e("OutlineInit", "pluginInitialize END +" + (System.currentTimeMillis()-t0) + "ms");
   }
 
   @Override
   public void onDestroy() {
+    if (watchdog != null) watchdog.stop();
     Context context = getBaseContext();
     context.unregisterReceiver(vpnTunnelBroadcastReceiver);
     context.unbindService(vpnServiceConnection);
@@ -163,19 +209,20 @@ public class OutlinePlugin extends CordovaPlugin {
 
   @Override
   public boolean execute(String action, JSONArray args, CallbackContext callbackContext) {
+    long execStart = System.currentTimeMillis();
     if (!Action.hasValue(action)) {
       return false;
     }
+    android.util.Log.e("OutlineExec", "execute() action=" + action + " on thread=" + Thread.currentThread().getName());
+
     if (Action.QUIT.is(action)) {
       this.cordova.getActivity().finish();
       return true;
     }
 
-    LOG.fine(String.format(Locale.ROOT, "Received action: %s", action));
-
     if (Action.ON_STATUS_CHANGE.is(action)) {
       this.statusCallback = callbackContext;
-      // TODO(fortuna): unregister original with Cordova.
+      android.util.Log.e("OutlineExec", "onStatusChange registered in " + (System.currentTimeMillis()-execStart) + "ms");
       return true;
     }
 
@@ -186,9 +233,11 @@ public class OutlinePlugin extends CordovaPlugin {
       return true;
     }
 
-    if (Action.ROUTING.is(action)) {
-      Intent routingIntent = new Intent(getBaseContext(), RoutingActivity.class);
-      this.cordova.getActivity().startActivity(routingIntent);
+    if (Action.VIEW_LOGS.is(action)) {
+      // Request notification permission on first log view (deferred from init to avoid ANR)
+      requestNotificationPermission();
+      Intent logIntent = new Intent(getBaseContext(), LogViewerActivity.class);
+      this.cordova.getActivity().startActivity(logIntent);
       callbackContext.success();
       return true;
     }
@@ -207,14 +256,95 @@ public class OutlinePlugin extends CordovaPlugin {
     }
 
     executeAsync(action, args, callbackContext);
+    android.util.Log.e("OutlineExec", "execute() action=" + action + " dispatched in " + (System.currentTimeMillis()-execStart) + "ms");
     return true;
+  }
+
+  /** Requests POST_NOTIFICATIONS permission on Android 13+. */
+  private void requestNotificationPermission() {
+    if (Build.VERSION.SDK_INT >= 33) { // TIRAMISU
+      Activity activity = this.cordova.getActivity();
+      if (activity.checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+              != PackageManager.PERMISSION_GRANTED) {
+        LOG.info("Requesting POST_NOTIFICATIONS permission");
+        activity.requestPermissions(
+                new String[]{"android.permission.POST_NOTIFICATIONS"}, REQUEST_CODE_NOTIFICATIONS);
+      }
+    }
+  }
+
+  /** Waits for the Go backend to be ready (called from background threads only). */
+  private void awaitGoBackend() {
+    try {
+      if (!goBackendReady.await(30, TimeUnit.SECONDS)) {
+        LOG.severe("Timed out waiting for Go backend initialization");
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   // Executes an action asynchronously through the Cordova thread pool.
   private void executeAsync(
       final String action, final JSONArray args, final CallbackContext callback) {
     cordova.getThreadPool().execute(() -> {
+      long asyncStart = System.currentTimeMillis();
+      android.util.Log.e("OutlineAsync", "executeAsync START action=" + action + " on thread=" + Thread.currentThread().getName());
       try {
+        // ── Actions that do NOT need the Go backend ──
+        if (Action.IS_RUNNING.is(action)) {
+          final String tunnelId = args.getString(0);
+          android.util.Log.e("OutlineAsync", "isRunning: calling isTunnelActive for " + tunnelId);
+          boolean isActive = isTunnelActive(tunnelId);
+          android.util.Log.e("OutlineAsync", "isRunning: result=" + isActive + " in " + (System.currentTimeMillis()-asyncStart) + "ms");
+          callback.sendPluginResult(new PluginResult(PluginResult.Status.OK, isActive));
+          return;
+        }
+
+        if (Action.INIT_ERROR_REPORTING.is(action)) {
+          android.util.Log.e("OutlineAsync", "initErrorReporting: spawning sentry-init thread");
+          errorReportingApiKey = args.getString(0);
+          new Thread(() -> {
+            long st0 = System.currentTimeMillis();
+            try {
+              SentryErrorReporter.init(getBaseContext(), errorReportingApiKey);
+              android.util.Log.e("OutlineAsync", "Sentry init done in " + (System.currentTimeMillis()-st0) + "ms");
+              if (vpnTunnelService != null) {
+                vpnTunnelService.initErrorReporting(errorReportingApiKey);
+                android.util.Log.e("OutlineAsync", "Sentry VPN init done in " + (System.currentTimeMillis()-st0) + "ms");
+              }
+            } catch (Exception e) {
+              LOG.log(Level.WARNING, "Error reporting init failed", e);
+            }
+          }, "sentry-init").start();
+          callback.success();
+          return;
+        }
+
+        if (Action.REPORT_EVENTS.is(action)) {
+          final String uuid = args.getString(0);
+          SentryErrorReporter.send(uuid);
+          callback.success();
+          return;
+        }
+
+        // ── Actions that NEED the Go backend — wait only here ──
+        awaitGoBackend();
+
+        // Wait for VPN service to be bound (may take a moment after app update)
+        if (vpnTunnelService == null) {
+          LOG.info("Waiting for VPN service to bind...");
+          for (int i = 0; i < 50 && vpnTunnelService == null; i++) {
+            Thread.sleep(100);
+          }
+          if (vpnTunnelService == null) {
+            LOG.severe("VPN service not bound after 5 seconds");
+            sendActionResult(callback, new PlatformError(
+                Platerrors.InternalError, "VPN service not available"));
+            return;
+          }
+        }
+
         if (Action.INVOKE_METHOD.is(action)) {
           final String methodName = args.getString(0);
           final String input = args.getString(1);
@@ -227,8 +357,6 @@ public class OutlinePlugin extends CordovaPlugin {
             LOG.fine(String.format(Locale.ROOT, "InvokeMethod(%s) result: %s", methodName, result.getValue()));
             callback.success(result.getValue());
           }
-
-        // Tunnel instance actions: tunnel ID is always the first argument.
         } else if (Action.START.is(action)) {
           final String tunnelId = args.getString(0);
           final String serverName = args.getString(1);
@@ -238,22 +366,6 @@ public class OutlinePlugin extends CordovaPlugin {
           final String tunnelId = args.getString(0);
           LOG.info(String.format(Locale.ROOT, "Stopping VPN tunnel %s", tunnelId));
           sendActionResult(callback, vpnTunnelService.stopTunnel(tunnelId));
-        } else if (Action.IS_RUNNING.is(action)) {
-          final String tunnelId = args.getString(0);
-          boolean isActive = isTunnelActive(tunnelId);
-          callback.sendPluginResult(new PluginResult(PluginResult.Status.OK, isActive));
-
-          // Static actions
-        } else if (Action.INIT_ERROR_REPORTING.is(action)) {
-          errorReportingApiKey = args.getString(0);
-          // Treat failures to initialize error reporting as unexpected by propagating exceptions.
-          SentryErrorReporter.init(getBaseContext(), errorReportingApiKey);
-          vpnTunnelService.initErrorReporting(errorReportingApiKey);
-          callback.success();
-        } else if (Action.REPORT_EVENTS.is(action)) {
-          final String uuid = args.getString(0);
-          SentryErrorReporter.send(uuid);
-          callback.success();
         } else {
           throw new IllegalArgumentException(
               String.format(Locale.ROOT, "Unexpected action %s", action));
@@ -308,6 +420,10 @@ public class OutlinePlugin extends CordovaPlugin {
 
   // Returns whether the VPN service is running a particular tunnel instance.
   private boolean isTunnelActive(final String tunnelId) {
+    if (vpnTunnelService == null) {
+      LOG.warning("VPN service not yet bound, assuming tunnel is not active");
+      return false;
+    }
     try {
       return vpnTunnelService.isTunnelActive(tunnelId);
     } catch (Exception e) {
@@ -332,6 +448,7 @@ public class OutlinePlugin extends CordovaPlugin {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+      android.util.Log.e("OutlineExec", "BroadcastReceiver.onReceive on thread=" + Thread.currentThread().getName());
       final String tunnelId = intent.getStringExtra(MessageData.TUNNEL_ID.value);
       if (tunnelId == null) {
         LOG.warning("Tunnel status broadcast missing tunnel ID");
