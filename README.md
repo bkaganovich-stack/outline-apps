@@ -27,3 +27,6 @@ This fork uses `org.outline.android.client.st` as its application ID, so it can 
 ### Attribution
 Based on [Outline VPN](https://github.com/Jigsaw-Code/outline-apps) by [Jigsaw / Google](https://jigsaw.google.com/).
 Licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+### Disclaimer
+This software is provided as-is for research and personal use. Use it responsibly and in accordance with the laws of your jurisdiction
