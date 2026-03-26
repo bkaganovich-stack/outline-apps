@@ -1,4 +1,4 @@
-# <img alt="Outline Manager Logo" src="docs/resources/logo_manager.png" title="Outline Manager" width="32">&nbsp;&nbsp;Outline Apps&nbsp;&nbsp;<img alt="Outline Client Logo" src="docs/resources/logo_client.png" title="Outline Client" width="32">
+# <img alt="Outline Manager Logo" src="docs/resources/logo_manager.png" title="Outline Manager" width="32">&nbsp;&nbsp;Outline ST&nbsp;&nbsp;<img alt="Outline Client Logo" src="docs/resources/logo_client.png" title="Outline Client" width="32">
 
 [![Reddit](https://badgen.net/badge/Reddit/r%2Foutlinevpn/orange)](https://www.reddit.com/r/outlinevpn/) [![Mattermost](https://badgen.net/badge/Mattermost/Outline%20Community/blue)](https://community.internetfreedomfestival.org/community/channels/outline-community) [![Code Style: Google](https://img.shields.io/badge/code%20style-google-blueviolet.svg)](https://github.com/google/gts)
 
