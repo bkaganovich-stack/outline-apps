@@ -1,5 +1,3 @@
-# <img alt="Outline Manager Logo" src="docs/resources/logo_manager.png" title="Outline Manager" width="32">&nbsp;&nbsp;Outline ST&nbsp;&nbsp;<img alt="Outline Client Logo" src="docs/resources/logo_client.png" title="Outline Client" width="32">
-
 ## Outline ST
 
 Modified [Outline](https://github.com/Jigsaw-Code/outline-apps) client for Android with **per-app split tunneling** (app-level routing).
