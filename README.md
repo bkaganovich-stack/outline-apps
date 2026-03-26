@@ -14,12 +14,6 @@ Modified [Outline](https://github.com/Jigsaw-Code/outline-apps) client for Andro
 - **ANR watchdog** — monitors main thread responsiveness
 - **Automatic upstream sync** — GitHub Actions checks for Outline updates every 12 hours
 
-### Bug Fixes
-- Fixed Service ANR when updating APK with active VPN connection
-- Fixed ANR during Go backend and Sentry SDK initialization
-- Fixed incomplete app list on Android 11+
-- Fixed ANR when opening split tunnel app list
-
 ### Installation
 1. Download `outline-st-v0.1.0.apk` below
 2. Install on Android device (requires Android 10+)
@@ -33,14 +27,3 @@ This fork uses `org.outline.android.client.st` as its application ID, so it can 
 ### Attribution
 Based on [Outline VPN](https://github.com/Jigsaw-Code/outline-apps) by [Jigsaw / Google](https://jigsaw.google.com/).
 Licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
-
-
-## Community and Support
-
-Interested in **contributing to Outline?** See our [Contributing Guide](CONTRIBUTING.md) for more information.
-
-See [AGENTS.md](./AGENTS.md) for AI agent and developer guidance.
-
-You can also **join the Outline Community** by signing up for the [IFF Mattermost](https://wiki.digitalrights.community/index.php?title=IFF_Mattermost)!
-
-For customer support and to **contact us directly**, go to https://support.getoutline.org.
