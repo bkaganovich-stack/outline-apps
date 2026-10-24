@@ -1,5 +1,9 @@
 ## Outline ST
 
+> [!WARNING]
+> **This project is no longer maintained and the repository is archived.**
+> Outline ST is no longer synced with the upstream [Outline](https://github.com/Jigsaw-Code/outline-apps) client and receives no updates or security fixes. The code is kept as-is for reference; for everyday use, install the official Outline app.
+
 Modified [Outline](https://github.com/Jigsaw-Code/outline-apps) client for Android with **per-app split tunneling** (app-level routing).
 
 > **Can be installed alongside the original Outline app** — uses a separate application ID (`org.outline.android.client.st`).
@@ -12,7 +16,7 @@ Modified [Outline](https://github.com/Jigsaw-Code/outline-apps) client for Andro
   - Settings auto-save on exit
 - **App Logs viewer** — built-in log viewer for diagnostics
 - **ANR watchdog** — monitors main thread responsiveness
-- **Automatic upstream sync** — GitHub Actions checks for Outline updates every 12 hours
+- ~~**Automatic upstream sync** — GitHub Actions checks for Outline updates every 12 hours~~ (discontinued)
 
 ### Installation
 1. Download `outline-st-v0.1.0.apk` below
